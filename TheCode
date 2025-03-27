@@ -1,0 +1,120 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.model_selection import train_test_split
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense, Dropout
+
+# Step 1: Load Energy Consumption Data
+# For this example, let's assume you already have a dataset with columns: timestamp, client_id, consumption
+# Example: energy_data = pd.read_csv('energy_data.csv')
+
+# Generating synthetic data as an example
+np.random.seed(42)
+hours = pd.date_range('2023-01-01', '2023-12-31', freq='H')
+data = {
+    'timestamp': hours,
+    'consumption': np.random.normal(10, 5, size=len(hours))  # Consumption in kWh
+}
+df = pd.DataFrame(data)
+
+# Step 2: Data Preprocessing
+# Convert 'timestamp' to datetime and set it as index
+df['timestamp'] = pd.to_datetime(df['timestamp'])
+df.set_index('timestamp', inplace=True)
+
+# Use MinMaxScaler to normalize consumption values (important for LSTM)
+scaler = MinMaxScaler(feature_range=(0, 1))
+df['consumption'] = scaler.fit_transform(df[['consumption']])
+
+# Step 3: Prepare Data for LSTM (Create Time Windows for Training)
+# Create sequences of past 'n' hours to predict the next hour's consumption
+def create_sequences(data, window_size):
+    X = []
+    y = []
+    for i in range(len(data) - window_size):
+        X.append(data[i:i+window_size])
+        y.append(data[i+window_size])
+    return np.array(X), np.array(y)
+
+window_size = 24  # Use past 24 hours to predict the next hour
+data_values = df['consumption'].values
+
+X, y = create_sequences(data_values, window_size)
+
+# Reshape the data for LSTM: (samples, time_steps, features)
+X = X.reshape((X.shape[0], X.shape[1], 1))
+
+# Step 4: Split Data into Training and Testing Sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+
+# Step 5: Build and Train the LSTM Model
+model = Sequential()
+
+# LSTM layer with 50 units
+model.add(LSTM(units=50, return_sequences=True, input_shape=(X_train.shape[1], X_train.shape[2])))
+model.add(Dropout(0.2))  # Dropout to avoid overfitting
+
+# LSTM layer with 50 units
+model.add(LSTM(units=50, return_sequences=False))
+model.add(Dropout(0.2))
+
+# Fully connected layer (output layer)
+model.add(Dense(units=1))
+
+# Compile the model
+model.compile(optimizer='adam', loss='mean_squared_error')
+
+# Train the model
+history = model.fit(X_train, y_train, epochs=10, batch_size=32, validation_data=(X_test, y_test), verbose=1)
+
+# Step 6: Make Predictions
+predicted_consumption = model.predict(X_test)
+
+# Inverse transform the predictions and actual values to the original scale
+predicted_consumption = scaler.inverse_transform(predicted_consumption)
+y_test_actual = scaler.inverse_transform(y_test.reshape(-1, 1))
+
+# Step 7: Visualize the Results
+plt.figure(figsize=(10, 6))
+plt.plot(y_test_actual, label='Actual Consumption', color='blue')
+plt.plot(predicted_consumption, label='Predicted Consumption', color='red')
+plt.title('Energy Consumption Prediction using LSTM')
+plt.xlabel('Time')
+plt.ylabel('Energy Consumption (kWh)')
+plt.legend()
+plt.show()
+
+# Step 8: Future Predictions (Forecasting the Next N Days)
+# Let's predict the next 7 days of consumption (7 * 24 = 168 hours)
+
+def predict_future(model, last_data, days=7):
+    future_predictions = []
+    data = last_data
+    for _ in range(days * 24):  # Predict next 7 days (168 hours)
+        prediction = model.predict(data.reshape(1, window_size, 1))
+        future_predictions.append(prediction[0, 0])
+        data = np.append(data[1:], prediction)
+        data = data.reshape(window_size, 1)
+    return future_predictions
+
+# Get the last sequence from the training data
+last_sequence = X_train[-1]
+
+# Predict the next 7 days of energy consumption
+future_predictions = predict_future(model, last_sequence, days=7)
+
+# Inverse transform future predictions
+future_predictions = scaler.inverse_transform(np.array(future_predictions).reshape(-1, 1))
+
+# Plot future predictions
+future_dates = pd.date_range(df.index[-1], periods=8, freq='D')[1:]
+
+plt.figure(figsize=(10, 6))
+plt.plot(future_dates, future_predictions, label='Future Predictions', color='orange')
+plt.title('Future Energy Consumption Prediction (Next 7 Days)')
+plt.xlabel('Date')
+plt.ylabel('Energy Consumption (kWh)')
+plt.legend()
+plt.show()
